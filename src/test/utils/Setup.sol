@@ -4,12 +4,16 @@ pragma solidity ^0.8.18;
 import "forge-std/console2.sol";
 import {ExtendedTest} from "./ExtendedTest.sol";
 
-import {Strategy, ERC20} from "../../Strategy.sol";
+import {CCIPBridgerStrategy, ERC20} from "../../CCIPBridgerStrategy.sol";
 import {StrategyFactory} from "../../StrategyFactory.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
 
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
+
+//////////////////////////////// MY THINGS ////////////////////////////////
+import {GHOCCIPBridgerStrategy} from "../../GHOCCIPBridgerStrategy.sol";
+import {DestinationStrategy} from "../../DestinationStrategy.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -43,17 +47,26 @@ contract Setup is ExtendedTest, IEvents {
     uint256 public MAX_BPS = 10_000;
 
     // Fuzz from $0.01 of 1e6 stable coins up to 1 trillion of a 1e18 coin
-    uint256 public maxFuzzAmount = 1e30;
-    uint256 public minFuzzAmount = 10_000;
+    uint256 public maxFuzzAmount = 1_000_000e6;
+    uint256 public minFuzzAmount = 1e6;
 
     // Default profit max unlock time is set for 10 days
     uint256 public profitMaxUnlockTime = 10 days;
+
+    ////////////////////////////////
+    //// SETUP VARIABLES ///////////
+    ////////////////////////////////
+    DestinationStrategy public destinationStrategyArbitrum;
+    uint64 public arbitrumChainSelector = 4949039107694359620;
+    uint64 public ethereumChainSelector = 5009297550715157269;
+    address public ccipEthRouter = 0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
+    address public ccipArbRouter = 0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
 
     function setUp() public virtual {
         _setTokenAddrs();
 
         // Set asset
-        asset = ERC20(tokenAddrs["DAI"]);
+        asset = ERC20(tokenAddrs["USDC"]);
 
         // Set decimals
         decimals = asset.decimals();
@@ -68,6 +81,8 @@ contract Setup is ExtendedTest, IEvents {
         // Deploy strategy and set variables
         strategy = IStrategyInterface(setUpStrategy());
 
+        _validateStrategyDeploymentAddresses(strategy);
+
         factory = strategy.FACTORY();
 
         // label all the used addresses for traces
@@ -79,13 +94,23 @@ contract Setup is ExtendedTest, IEvents {
         vm.label(performanceFeeRecipient, "performanceFeeRecipient");
     }
 
+    function _validateStrategyDeploymentAddresses(
+        IStrategyInterface _strategy
+    ) internal view {
+        require(address(_strategy.ccipOnRamp()) != address(0), "!ON_RAMP");
+        require(address(_strategy.ccipPool()) != address(0), "!POOL");
+    }
+
     function setUpStrategy() public returns (address) {
         // we save the strategy as a IStrategyInterface to give it the needed interface
         IStrategyInterface _strategy = IStrategyInterface(
             address(
                 strategyFactory.newStrategy(
                     address(asset),
-                    "Tokenized Strategy"
+                    "Tokenized Strategy",
+                    arbitrumChainSelector,
+                    ccipEthRouter,
+                    address(destinationStrategyArbitrum)
                 )
             )
         );
@@ -156,12 +181,12 @@ contract Setup is ExtendedTest, IEvents {
     }
 
     function _setTokenAddrs() internal {
-        tokenAddrs["WBTC"] = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-        tokenAddrs["YFI"] = 0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e;
-        tokenAddrs["WETH"] = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
-        tokenAddrs["LINK"] = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
-        tokenAddrs["USDT"] = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-        tokenAddrs["DAI"] = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+        // tokenAddrs["WBTC"] = 0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
+        // tokenAddrs["YFI"] = 0x0bc529c00C6401aEF6D220BE8C6Ea1667F6Ad93e;
+        // tokenAddrs["WETH"] = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+        // tokenAddrs["LINK"] = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
+        // tokenAddrs["USDT"] = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+        // tokenAddrs["DAI"] = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
         tokenAddrs["USDC"] = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     }
 }

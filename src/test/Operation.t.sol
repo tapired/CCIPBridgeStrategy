@@ -19,6 +19,45 @@ contract OperationTest is Setup {
         // TODO: add additional check on strat params
     }
 
+    function test_single_deposit() public {
+        uint256 _amount = 1_000e6;
+
+        // Deposit into strategy
+        mintAndDepositIntoStrategy(strategy, user, _amount);
+
+        console2.log(
+            "available deposti limit",
+            strategy.availableDepositLimit(user)
+        );
+
+        assertEq(strategy.totalAssets(), _amount, "!totalAssets");
+
+        // Earn Interest
+        skip(1 days);
+
+        // Report profit
+        vm.prank(keeper);
+        (uint256 profit, uint256 loss) = strategy.report();
+
+        // Check return Values
+        assertGe(profit, 0, "!profit");
+        assertEq(loss, 0, "!loss");
+
+        skip(strategy.profitMaxUnlockTime());
+
+        uint256 balanceBefore = asset.balanceOf(user);
+
+        // Withdraw all funds
+        vm.prank(user);
+        strategy.redeem(_amount, user, user);
+
+        assertGe(
+            asset.balanceOf(user),
+            balanceBefore + _amount,
+            "!final balance"
+        );
+    }
+
     function test_operation(uint256 _amount) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
 
