@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.18;
 
-import {CCIPBridgerStrategy} from "./CCIPBridgerStrategy.sol";
+import {CCIPBridgerV1Strategy} from "./CCIPBridgerV1Strategy.sol";
 import {IPool} from "./interfaces/chainlink/IPool.sol";
 
-contract USDCCCIPBridgerStrategy is CCIPBridgerStrategy {
+contract USDCCCIPBridgerV1Strategy is CCIPBridgerV1Strategy {
     constructor(
         address _asset,
         string memory _name,
@@ -12,7 +12,7 @@ contract USDCCCIPBridgerStrategy is CCIPBridgerStrategy {
         address _ccipRouter,
         address _destinationStrategy
     )
-        CCIPBridgerStrategy(
+        CCIPBridgerV1Strategy(
             _asset,
             _name,
             _destChainSelector,

@@ -58,11 +58,28 @@ contract Setup is ExtendedTest, IEvents {
     ////////////////////////////////
     DestinationStrategy public destinationStrategyArbitrum;
     uint64 public arbitrumChainSelector = 4949039107694359620;
-    uint64 public ethereumChainSelector = 5009297550715157269;
-    address public ccipEthRouter = 0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D;
+    uint64 public ethereumChainSelector = 4051577828743386545;
+    address public ccipEthRouter = 0x849c5ED5a80F5B408Dd4969b78c2C8fdf0565Bfe;
     address public ccipArbRouter = 0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
+    address public usdcYieldStrategy = 0x6FAF8b7fFeE3306EfcFc2BA9Fec912b4d49834C1; // usdc yvault
+    address public arbOfframpForPolygon = 0x9bDA7c8DCda4E39aFeB483cc0B7E3C1f6E0D5AB1;
+
+    address public arbUsdc = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+
+    uint256 public maticFork;
+    uint256 public arbFork;
+
+    string public MATIC_RPC_URL = vm.envString("MATIC_RPC_URL");
+    string public ARBI_RPC_URL = vm.envString("ARBI_RPC_URL");
+    
+    bytes32 public message_id = keccak256("message_id");
 
     function setUp() public virtual {
+        maticFork = vm.createFork(MATIC_RPC_URL);
+        arbFork = vm.createFork(ARBI_RPC_URL);
+
+        vm.selectFork(maticFork);
+
         _setTokenAddrs();
 
         // Set asset
@@ -78,7 +95,11 @@ contract Setup is ExtendedTest, IEvents {
             emergencyAdmin
         );
 
+        vm.selectFork(arbFork);
+        destinationStrategyArbitrum = _deployDestinationStrategy();
+
         // Deploy strategy and set variables
+        vm.selectFork(maticFork);
         strategy = IStrategyInterface(setUpStrategy());
 
         _validateStrategyDeploymentAddresses(strategy);
@@ -92,6 +113,10 @@ contract Setup is ExtendedTest, IEvents {
         vm.label(management, "management");
         vm.label(address(strategy), "strategy");
         vm.label(performanceFeeRecipient, "performanceFeeRecipient");
+    }
+
+    function _deployDestinationStrategy() internal returns (DestinationStrategy s) {
+        return new DestinationStrategy(ccipArbRouter, usdcYieldStrategy, arbUsdc, ethereumChainSelector, management);
     }
 
     function _validateStrategyDeploymentAddresses(
@@ -110,7 +135,7 @@ contract Setup is ExtendedTest, IEvents {
                     "Tokenized Strategy",
                     arbitrumChainSelector,
                     ccipEthRouter,
-                    address(destinationStrategyArbitrum)
+                    address(131)
                 )
             )
         );
@@ -119,6 +144,15 @@ contract Setup is ExtendedTest, IEvents {
         _strategy.acceptManagement();
 
         return address(_strategy);
+    }
+
+    function tendWithKeeper(address _feeToken, address _keeper, uint256 _feeAmount, IStrategyInterface _strategy) public {
+        deal(_feeToken, keeper, _feeAmount);
+
+        vm.prank(_keeper);
+        ERC20(_feeToken).transfer(address(strategy), _feeAmount);
+        vm.prank(_keeper);
+        _strategy.tend();
     }
 
     function depositIntoStrategy(
@@ -187,6 +221,6 @@ contract Setup is ExtendedTest, IEvents {
         // tokenAddrs["LINK"] = 0x514910771AF9Ca656af840dff83E8264EcF986CA;
         // tokenAddrs["USDT"] = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
         // tokenAddrs["DAI"] = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-        tokenAddrs["USDC"] = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+        tokenAddrs["USDC"] = 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359;
     }
 }

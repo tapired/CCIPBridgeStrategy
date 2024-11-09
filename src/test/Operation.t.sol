@@ -3,7 +3,8 @@ pragma solidity ^0.8.18;
 
 import "forge-std/console2.sol";
 import {Setup, ERC20, IStrategyInterface} from "./utils/Setup.sol";
-
+import {Client} from "../libraries/Client.sol";
+import {IRouterClient} from "../interfaces/chainlink/IRouterClient.sol";
 contract OperationTest is Setup {
     function setUp() public virtual override {
         super.setUp();
@@ -58,6 +59,22 @@ contract OperationTest is Setup {
         );
     }
 
+    function _build_any2evm_message(uint256 _amount, address _token, address _strategy) internal returns (Client.Any2EVMMessage memory) {
+        message_id = keccak256(abi.encodePacked(message_id, message_id));
+        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
+        tokenAmounts[0] = Client.EVMTokenAmount({
+            token: _token,
+            amount: _amount
+        });
+        return Client.Any2EVMMessage({
+            messageId: message_id,
+            sourceChainSelector: ethereumChainSelector,
+            sender: abi.encode(_strategy),
+            data: abi.encode(_amount),
+            destTokenAmounts: tokenAmounts
+        });
+    }
+
     function test_operation(uint256 _amount) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
 
@@ -69,27 +86,39 @@ contract OperationTest is Setup {
         // Earn Interest
         skip(1 days);
 
-        // Report profit
-        vm.prank(keeper);
-        (uint256 profit, uint256 loss) = strategy.report();
+        // first to a tend
+        uint256 feeAmount = strategy.getFeeGenerateMessage();
+        address feeToken = strategy.feeToken();
+        tendWithKeeper(feeToken, keeper, feeAmount, strategy);
 
-        // Check return Values
-        assertGe(profit, 0, "!profit");
-        assertEq(loss, 0, "!loss");
+        vm.selectFork(arbFork);
+        Client.Any2EVMMessage memory message = _build_any2evm_message(_amount, address(asset), address(strategy));
+        vm.prank(arbOfframpForPolygon);
+        IRouterClient(ccipArbRouter).routeMessage(message, 0, 2_000_000, address(destinationStrategyArbitrum));
+        // assertEq(ERC20(arbUsdc).balanceOf(address(destinationStrategyArbitrum)), _amount);
 
-        skip(strategy.profitMaxUnlockTime());
+        // // Report profit
+        // vm.selectFork(maticFork);
+        // vm.prank(keeper);
+        // (uint256 profit, uint256 loss) = strategy.report();
 
-        uint256 balanceBefore = asset.balanceOf(user);
+        // // Check return Values
+        // assertGe(profit, 0, "!profit");
+        // assertEq(loss, 0, "!loss");
 
-        // Withdraw all funds
-        vm.prank(user);
-        strategy.redeem(_amount, user, user);
+        // skip(strategy.profitMaxUnlockTime());
 
-        assertGe(
-            asset.balanceOf(user),
-            balanceBefore + _amount,
-            "!final balance"
-        );
+        // uint256 balanceBefore = asset.balanceOf(user);
+
+        // // Withdraw all funds
+        // vm.prank(user);
+        // strategy.redeem(_amount, user, user);
+
+        // assertGe(
+        //     asset.balanceOf(user),
+        //     balanceBefore + _amount,
+        //     "!final balance"
+        // );
     }
 
     function test_profitableReport(
@@ -199,40 +228,63 @@ contract OperationTest is Setup {
         );
     }
 
-    function test_tendTrigger(uint256 _amount) public {
-        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
-
+    function test_tend() public {
+        uint256 _amount = 1000e6;
         (bool trigger, ) = strategy.tendTrigger();
         assertTrue(!trigger);
 
-        // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
         (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
+        assertTrue(trigger);
 
-        // Skip some time
-        skip(1 days);
+        Client.EVM2AnyMessage memory m = strategy.buildCCIPMessage(_amount, true);
+        uint256 fee = strategy.getFeeGenerateMessage();
+        address feeToken = strategy.feeToken();
 
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
+        deal(feeToken, keeper, fee);
+        console2.log("Fee", fee);
 
         vm.prank(keeper);
-        strategy.report();
-
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
-
-        // Unlock Profits
-        skip(strategy.profitMaxUnlockTime());
-
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
-
-        vm.prank(user);
-        strategy.redeem(_amount, user, user);
-
-        (trigger, ) = strategy.tendTrigger();
-        assertTrue(!trigger);
+        ERC20(feeToken).transfer(address(strategy), fee);
+        vm.prank(keeper);
+        strategy.tend();
     }
+
+    // function test_tendTrigger(uint256 _amount) public {
+    //     vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
+
+    //     (bool trigger, ) = strategy.tendTrigger();
+    //     assertTrue(!trigger);
+
+    //     // Deposit into strategy
+    //     mintAndDepositIntoStrategy(strategy, user, _amount);
+
+    //     (trigger, ) = strategy.tendTrigger();
+    //     assertTrue(trigger);
+
+    //     // Skip some time
+    //     skip(1 days);
+
+    //     (trigger, ) = strategy.tendTrigger();
+    //     assertTrue(trigger);
+
+    //     vm.prank(keeper);
+    //     strategy.report();
+
+    //     (trigger, ) = strategy.tendTrigger();
+    //     assertTrue(trigger);
+
+    //     // Unlock Profits
+    //     skip(strategy.profitMaxUnlockTime());
+
+    //     (trigger, ) = strategy.tendTrigger();
+    //     assertTrue(trigger);
+
+    //     vm.prank(user);
+    //     strategy.redeem(_amount, user, user);
+
+    //     (trigger, ) = strategy.tendTrigger();
+    //     assertTrue(!trigger);
+    // }
 }

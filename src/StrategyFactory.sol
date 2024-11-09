@@ -2,6 +2,7 @@
 pragma solidity ^0.8.18;
 
 import {CCIPBridgerStrategy, ERC20} from "./CCIPBridgerStrategy.sol";
+import {USDCCCIPBridgerV1Strategy} from "./USDCCCIPBridgerV1Strategy.sol";
 import {IStrategyInterface} from "./interfaces/IStrategyInterface.sol";
 
 contract StrategyFactory {
@@ -43,7 +44,7 @@ contract StrategyFactory {
         // tokenized strategies available setters.
         IStrategyInterface _newStrategy = IStrategyInterface(
             address(
-                new CCIPBridgerStrategy(
+                new USDCCCIPBridgerV1Strategy(
                     _asset,
                     _name,
                     _destChainSelector,

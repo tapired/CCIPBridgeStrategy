@@ -12,7 +12,6 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 contract DestinationStrategy is CCIPReceiver {
     using SafeERC20 for ERC20;
 
-    address public immutable originStrategy;
     address public immutable asset;
     uint64 public immutable destChainSelector;
     address public immutable yieldStrategy; // ERC4626 yield strategy to earn yield from
@@ -23,6 +22,7 @@ contract DestinationStrategy is CCIPReceiver {
     bool public allowOutOfOrderExecutionExtraArgs;
     address public feeToken;
     address public owner;
+    address public originStrategy;
     uint256 public maxLossForEmergencyWithdraw;
 
     modifier onlyKeepers() {
@@ -37,13 +37,11 @@ contract DestinationStrategy is CCIPReceiver {
 
     constructor(
         address _router,
-        address _originStrategy,
         address _yieldStrategy,
         address _asset,
         uint64 _destChainSelector,
         address _owner
     ) CCIPReceiver(_router) {
-        originStrategy = _originStrategy;
         yieldStrategy = _yieldStrategy;
         asset = _asset;
         destChainSelector = _destChainSelector;
@@ -51,6 +49,16 @@ contract DestinationStrategy is CCIPReceiver {
 
         ERC20(_asset).forceApprove(_yieldStrategy, type(uint256).max);
         ERC20(_asset).forceApprove(_router, type(uint256).max);
+
+        // default for arbitrum. Remove in prod
+        gasLimitExtraArgs = 2_000_000; // 2 million gas
+        feeToken = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
+        allowOutOfOrderExecutionExtraArgs = true;
+    }
+
+    function setOriginStrategy(address _originStrategy) external onlyOwner {
+        require(originStrategy == address(0), "ALREADY_SET");
+        originStrategy = _originStrategy;
     }
 
     function getTotalAssets() public view returns (uint256) {
@@ -240,7 +248,7 @@ contract DestinationStrategy is CCIPReceiver {
     /// it can't be used as the fee token.
     function setFeeToken(address _feeToken) external onlyOwner {
         require(_feeToken != address(asset), "FEE_TOKEN_CANNOT_BE_ASSET");
-        ERC20(feeToken).forceApprove(i_ccipRouter, 0);
+        if (feeToken != address(0)) ERC20(feeToken).forceApprove(i_ccipRouter, 0);
         ERC20(_feeToken).forceApprove(i_ccipRouter, type(uint256).max);
         feeToken = _feeToken;
     }
@@ -283,7 +291,7 @@ contract DestinationStrategy is CCIPReceiver {
         uint256 _withdrawnAmount,
         uint256 _deltaAmount,
         bool _isProfit
-    ) private view returns (Client.EVM2AnyMessage memory) {
+    ) internal virtual view returns (Client.EVM2AnyMessage memory) {
         // Set the token amounts
         Client.EVM2AnyMessage memory evm2AnyMessage;
         if (_withdrawnAmount > 0) {

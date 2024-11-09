@@ -55,6 +55,13 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
         destChainSelector = _destChainSelector;
         destinationStrategy = _destinationStrategy;
         ERC20(_asset).forceApprove(address(_ccipRouter), type(uint256).max);
+
+        // TEST
+        gasLimitExtraArgs = 2_000_000; // 2 million gas
+        feeToken = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270; // wmatic
+        ERC20(feeToken).forceApprove(_ccipRouter, type(uint256).max);
+        maxFeeAmount = 100e18;
+        maxTendBaseFee = 1e18; //its polygon 
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -246,6 +253,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
      */
     function _tendTrigger() internal view virtual override returns (bool) {
         uint256 idleBalance = asset.balanceOf(address(this));
+        if (idleBalance == 0) return false;
         Client.EVM2AnyMessage memory message = _buildCCIPMessage(
             idleBalance,
             true
@@ -333,7 +341,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     /// it can't be used as the fee token.
     function setFeeToken(address _feeToken) external onlyKeepers {
         require(_feeToken != address(asset), "FEE_TOKEN_CANNOT_BE_ASSET");
-        ERC20(feeToken).forceApprove(i_ccipRouter, 0);
+        if (feeToken != address(0)) ERC20(feeToken).forceApprove(i_ccipRouter, 0);
         ERC20(_feeToken).forceApprove(i_ccipRouter, type(uint256).max);
         feeToken = _feeToken;
     }
@@ -456,7 +464,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     function _buildCCIPMessage(
         uint256 _amount,
         bool _isDeposit
-    ) private view returns (Client.EVM2AnyMessage memory) {
+    ) internal view virtual returns (Client.EVM2AnyMessage memory) {
         // Set the token amounts
         Client.EVM2AnyMessage memory evm2AnyMessage;
         if (_isDeposit) {
@@ -480,5 +488,21 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
         );
         evm2AnyMessage.feeToken = feeToken;
         return evm2AnyMessage;
+    }
+
+    // HELPER
+    function buildCCIPMessage(uint256 _amount, bool _isDeposit) external view returns (Client.EVM2AnyMessage memory) {
+        return _buildCCIPMessage(_amount, _isDeposit);
+    }
+
+    function getFeeWithMessage(Client.EVM2AnyMessage memory m) external view returns (uint256) {
+        return IRouterClient(i_ccipRouter).getFee(destChainSelector, m);
+    }
+
+    function getFeeGenerateMessage() external view returns (uint256) {
+        uint256 amount = asset.balanceOf(address(this));
+        Client.EVM2AnyMessage memory m = _buildCCIPMessage(amount, true);
+
+       return IRouterClient(i_ccipRouter).getFee(destChainSelector, m);
     }
 }
