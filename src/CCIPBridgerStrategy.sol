@@ -9,6 +9,7 @@ import {IEVM2AnyOnRampClient} from "./interfaces/chainlink/IEVM2AnyOnRampClient.
 import {IRouterClient} from "./interfaces/chainlink/IRouterClient.sol";
 import {CCIPReceiver} from "./CCIPReceiver.sol";
 import {IStrategyInterface} from "./interfaces/IStrategyInterface.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     using SafeERC20 for ERC20;
@@ -58,10 +59,8 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
 
         // TEST
         gasLimitExtraArgs = 2_000_000; // 2 million gas
-        feeToken = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270; // wmatic
-        ERC20(feeToken).forceApprove(_ccipRouter, type(uint256).max);
         maxFeeAmount = 100e18;
-        maxTendBaseFee = 1e18; //its polygon 
+        maxTendBaseFee = 1e18; //its polygon
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -291,6 +290,8 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
      */
     function _emergencyWithdraw(uint256 _amount) internal override {
         // ideally never to be used. We can always initiate a withdraw from destination strategy
+        // we need the fee to be here in this contract in order to execute the withdraw
+        _amount = Math.min(_amount, bridgedAssets);
         Client.EVM2AnyMessage memory message = _buildCCIPMessage(
             _amount,
             false
@@ -341,7 +342,8 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     /// it can't be used as the fee token.
     function setFeeToken(address _feeToken) external onlyKeepers {
         require(_feeToken != address(asset), "FEE_TOKEN_CANNOT_BE_ASSET");
-        if (feeToken != address(0)) ERC20(feeToken).forceApprove(i_ccipRouter, 0);
+        if (feeToken != address(0))
+            ERC20(feeToken).forceApprove(i_ccipRouter, 0);
         ERC20(_feeToken).forceApprove(i_ccipRouter, type(uint256).max);
         feeToken = _feeToken;
     }
@@ -435,7 +437,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
                 bridgedAssets -= deltaAmount;
             }
 
-            _harvestAndReport();
+            TokenizedStrategy.report();
             return;
         }
         if (callType == IStrategyInterface.CallType.WITHDRAW_AND_HARVEST) {
@@ -451,7 +453,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
 
             // then account the bridged back amount, note that this is idle in strategy
             bridgedAssets -= bridgedBackAmount;
-            _harvestAndReport();
+            TokenizedStrategy.report();
             return;
         }
     }
@@ -491,11 +493,16 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     }
 
     // HELPER
-    function buildCCIPMessage(uint256 _amount, bool _isDeposit) external view returns (Client.EVM2AnyMessage memory) {
+    function buildCCIPMessage(
+        uint256 _amount,
+        bool _isDeposit
+    ) external view returns (Client.EVM2AnyMessage memory) {
         return _buildCCIPMessage(_amount, _isDeposit);
     }
 
-    function getFeeWithMessage(Client.EVM2AnyMessage memory m) external view returns (uint256) {
+    function getFeeWithMessage(
+        Client.EVM2AnyMessage memory m
+    ) external view returns (uint256) {
         return IRouterClient(i_ccipRouter).getFee(destChainSelector, m);
     }
 
@@ -503,6 +510,20 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
         uint256 amount = asset.balanceOf(address(this));
         Client.EVM2AnyMessage memory m = _buildCCIPMessage(amount, true);
 
-       return IRouterClient(i_ccipRouter).getFee(destChainSelector, m);
+        return IRouterClient(i_ccipRouter).getFee(destChainSelector, m);
+    }
+
+    // EXTERNAL
+    address public thisKeeper;
+
+    function setThisKeeper(address _thisKeeper) external onlyManagement {
+        thisKeeper = _thisKeeper;
+    }
+
+    function tend() external {
+        require(msg.sender == thisKeeper, "!thisKeeper");
+        IStrategyInterface(address(this)).tendThis(
+            asset.balanceOf(address(this))
+        );
     }
 }

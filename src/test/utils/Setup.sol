@@ -7,13 +7,15 @@ import {ExtendedTest} from "./ExtendedTest.sol";
 import {CCIPBridgerStrategy, ERC20} from "../../CCIPBridgerStrategy.sol";
 import {StrategyFactory} from "../../StrategyFactory.sol";
 import {IStrategyInterface} from "../../interfaces/IStrategyInterface.sol";
+import {Client} from "../../libraries/Client.sol";
+import {IRouterClient} from "../../interfaces/chainlink/IRouterClient.sol";
 
 // Inherit the events so they can be checked if desired.
 import {IEvents} from "@tokenized-strategy/interfaces/IEvents.sol";
 
 //////////////////////////////// MY THINGS ////////////////////////////////
 import {GHOCCIPBridgerStrategy} from "../../GHOCCIPBridgerStrategy.sol";
-import {DestinationStrategy} from "../../DestinationStrategy.sol";
+import {DestinationStrategyV1} from "../../DestinationStrategyV1.sol";
 
 interface IFactory {
     function governance() external view returns (address);
@@ -56,22 +58,39 @@ contract Setup is ExtendedTest, IEvents {
     ////////////////////////////////
     //// SETUP VARIABLES ///////////
     ////////////////////////////////
-    DestinationStrategy public destinationStrategyArbitrum;
-    uint64 public arbitrumChainSelector = 4949039107694359620;
-    uint64 public ethereumChainSelector = 4051577828743386545;
-    address public ccipEthRouter = 0x849c5ED5a80F5B408Dd4969b78c2C8fdf0565Bfe;
-    address public ccipArbRouter = 0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
-    address public usdcYieldStrategy = 0x6FAF8b7fFeE3306EfcFc2BA9Fec912b4d49834C1; // usdc yvault
-    address public arbOfframpForPolygon = 0x9bDA7c8DCda4E39aFeB483cc0B7E3C1f6E0D5AB1;
+    DestinationStrategyV1 public destinationStrategy;
+    uint64 private arbitrumChainSelector = 4949039107694359620;
+    uint64 private polygonChainSelector = 4051577828743386545;
+    address private ccipRouterOrigin =
+        0x849c5ED5a80F5B408Dd4969b78c2C8fdf0565Bfe;
+    address private ccipRouterDestination =
+        0x141fa059441E0ca23ce184B6A78bafD2A517DdE8;
+    address private yieldStrategy = 0x6FAF8b7fFeE3306EfcFc2BA9Fec912b4d49834C1; // usdc yvault ARBITRUM
+    address private arbOfframpForPolygon =
+        0x9bDA7c8DCda4E39aFeB483cc0B7E3C1f6E0D5AB1;
+    address private polygonOfframpForArbitrum =
+        0x60f2788225CeE4a94f8E7589931d5A14Cbc4367d;
+    address private polygonWeth = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
+    address private arbUsdc = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    address private arbWeth = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
 
-    address public arbUsdc = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    /////// SET THESE ///////
+    address public destinationAsset = arbUsdc;
+    address public destinationOfframp = arbOfframpForPolygon;
+    address public originOfframp = polygonOfframpForArbitrum;
+    address public destinationFeeToken = arbWeth;
+    address public originFeeToken = polygonWeth;
+    uint64 public originChainSelector = polygonChainSelector;
+    uint64 public destinationChainSelector = arbitrumChainSelector;
+    /////////////////////////
 
+    // FOUNDRY STUFF //
     uint256 public maticFork;
     uint256 public arbFork;
-
     string public MATIC_RPC_URL = vm.envString("MATIC_RPC_URL");
     string public ARBI_RPC_URL = vm.envString("ARBI_RPC_URL");
-    
+
+    // DUMMY
     bytes32 public message_id = keccak256("message_id");
 
     function setUp() public virtual {
@@ -96,12 +115,20 @@ contract Setup is ExtendedTest, IEvents {
         );
 
         vm.selectFork(arbFork);
-        destinationStrategyArbitrum = _deployDestinationStrategy();
+        destinationStrategy = _deployDestinationStrategy();
 
         // Deploy strategy and set variables
         vm.selectFork(maticFork);
         strategy = IStrategyInterface(setUpStrategy());
 
+        vm.selectFork(arbFork);
+        vm.startPrank(management);
+        destinationStrategy.setOriginStrategy(address(strategy));
+        destinationStrategy.setFeeToken(destinationFeeToken);
+        destinationStrategy.setKeeper(keeper, true);
+        vm.stopPrank();
+
+        vm.selectFork(maticFork);
         _validateStrategyDeploymentAddresses(strategy);
 
         factory = strategy.FACTORY();
@@ -115,8 +142,18 @@ contract Setup is ExtendedTest, IEvents {
         vm.label(performanceFeeRecipient, "performanceFeeRecipient");
     }
 
-    function _deployDestinationStrategy() internal returns (DestinationStrategy s) {
-        return new DestinationStrategy(ccipArbRouter, usdcYieldStrategy, arbUsdc, ethereumChainSelector, management);
+    function _deployDestinationStrategy()
+        internal
+        returns (DestinationStrategyV1 s)
+    {
+        return
+            new DestinationStrategyV1(
+                ccipRouterDestination,
+                yieldStrategy,
+                destinationAsset,
+                originChainSelector,
+                management
+            );
     }
 
     function _validateStrategyDeploymentAddresses(
@@ -133,9 +170,9 @@ contract Setup is ExtendedTest, IEvents {
                 strategyFactory.newStrategy(
                     address(asset),
                     "Tokenized Strategy",
-                    arbitrumChainSelector,
-                    ccipEthRouter,
-                    address(131)
+                    destinationChainSelector,
+                    ccipRouterOrigin,
+                    address(destinationStrategy)
                 )
             )
         );
@@ -143,16 +180,139 @@ contract Setup is ExtendedTest, IEvents {
         vm.prank(management);
         _strategy.acceptManagement();
 
+        vm.prank(management);
+        _strategy.setFeeToken(originFeeToken);
+
+        vm.prank(management);
+        _strategy.setThisKeeper(keeper);
+
         return address(_strategy);
     }
 
-    function tendWithKeeper(address _feeToken, address _keeper, uint256 _feeAmount, IStrategyInterface _strategy) public {
-        deal(_feeToken, keeper, _feeAmount);
+    function _build_any2evm_message_from_origin(
+        uint256 _amount,
+        address _token,
+        address _strategy
+    ) internal returns (Client.Any2EVMMessage memory) {
+        message_id = keccak256(abi.encodePacked(message_id, message_id));
+        Client.EVMTokenAmount[]
+            memory tokenAmounts = new Client.EVMTokenAmount[](1);
+        tokenAmounts[0] = Client.EVMTokenAmount({
+            token: _token,
+            amount: _amount
+        });
+        return
+            Client.Any2EVMMessage({
+                messageId: message_id,
+                sourceChainSelector: originChainSelector,
+                sender: abi.encode(_strategy),
+                data: abi.encode(_amount),
+                destTokenAmounts: tokenAmounts
+            });
+    }
+
+    function _build_any2evm_message_from_destination(
+        uint256 _withdrawnAmount,
+        uint256 _deltaAmount,
+        bool _isProfit,
+        IStrategyInterface.CallType _callType
+    ) internal returns (Client.Any2EVMMessage memory) {
+        message_id = keccak256(abi.encodePacked(message_id, message_id));
+        uint l;
+        if (_withdrawnAmount > 0) {
+            l = 1;
+        }
+
+        Client.EVMTokenAmount[]
+            memory tokenAmounts = new Client.EVMTokenAmount[](l);
+
+        if (_withdrawnAmount > 0) {
+            Client.EVMTokenAmount memory tokenAmount = Client.EVMTokenAmount({
+                token: address(asset),
+                amount: _withdrawnAmount
+            });
+            tokenAmounts[0] = tokenAmount;
+        }
+        return
+            Client.Any2EVMMessage({
+                messageId: message_id,
+                sourceChainSelector: destinationChainSelector,
+                sender: abi.encode(address(destinationStrategy)),
+                data: abi.encode(_callType, _deltaAmount, _isProfit),
+                destTokenAmounts: tokenAmounts
+            });
+    }
+
+    function forwardTendMessageFromOrigin(uint256 _amount) internal {
+        Client.Any2EVMMessage
+            memory message = _build_any2evm_message_from_origin(
+                _amount,
+                destinationAsset,
+                address(strategy)
+            );
+        deal(destinationAsset, address(destinationStrategy), _amount); // airdrop
+        vm.prank(destinationOfframp);
+        // if the message succeeds I think its fair enough to think that the funds are also transferred
+        (bool s, , ) = IRouterClient(ccipRouterDestination).routeMessage(
+            message,
+            0,
+            2_000_000,
+            address(destinationStrategy)
+        );
+        require(s, "!message failed");
+    }
+
+    function forwardHarvestAndWithdrawMessageFromDestination(
+        uint256 _withdrawnAmount,
+        uint256 _deltaAmount,
+        bool _isProfit,
+        IStrategyInterface.CallType _callType
+    ) internal {
+        Client.Any2EVMMessage
+            memory message = _build_any2evm_message_from_destination(
+                _withdrawnAmount,
+                _deltaAmount,
+                _isProfit,
+                _callType
+            );
+        deal(address(asset), address(strategy), _withdrawnAmount); // airdrop
+        vm.prank(originOfframp);
+        // if the message succeeds I think its fair enough to think that the funds are also transferred
+        (bool s, , ) = IRouterClient(ccipRouterOrigin).routeMessage(
+            message,
+            0,
+            2_000_000,
+            address(strategy)
+        );
+        require(s, "!message failed");
+    }
+
+    function tendWithKeeper(
+        address _feeToken,
+        address _keeper,
+        uint256 _feeAmount,
+        IStrategyInterface _strategy
+    ) public {
+        deal(_feeToken, _keeper, _feeAmount);
 
         vm.prank(_keeper);
         ERC20(_feeToken).transfer(address(strategy), _feeAmount);
         vm.prank(_keeper);
         _strategy.tend();
+    }
+
+    function harvestDestinationStrategy(
+        address _feeToken,
+        address _keeper,
+        uint256 _feeAmount,
+        DestinationStrategyV1 _strategy
+    ) public {
+        deal(_feeToken, _keeper, _feeAmount);
+
+        vm.prank(_keeper);
+        ERC20(_feeToken).transfer(address(_strategy), _feeAmount);
+        vm.prank(_keeper);
+        _strategy.harvest();
     }
 
     function depositIntoStrategy(

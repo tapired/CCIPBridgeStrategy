@@ -37,9 +37,15 @@ interface IStrategyInterface is IStrategy {
     function setOpenAndAreWeAllowed(bool _open, bool _areWeAllowed) external;
     function setOnRampAndPool() external;
 
-    function buildCCIPMessage(uint256 _amount, bool _isDeposit) external view returns (Client.EVM2AnyMessage memory);
+    function buildCCIPMessage(
+        uint256 _amount,
+        bool _isDeposit
+    ) external view returns (Client.EVM2AnyMessage memory);
 
-    function getFeeWithMessage(Client.EVM2AnyMessage memory m) external view returns (uint256);
+    function getFeeWithMessage(
+        Client.EVM2AnyMessage memory m
+    ) external view returns (uint256);
 
     function getFeeGenerateMessage() external view returns (uint256);
+    function setThisKeeper(address _thisKeeper) external;
 }

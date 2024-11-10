@@ -248,7 +248,8 @@ contract DestinationStrategy is CCIPReceiver {
     /// it can't be used as the fee token.
     function setFeeToken(address _feeToken) external onlyOwner {
         require(_feeToken != address(asset), "FEE_TOKEN_CANNOT_BE_ASSET");
-        if (feeToken != address(0)) ERC20(feeToken).forceApprove(i_ccipRouter, 0);
+        if (feeToken != address(0))
+            ERC20(feeToken).forceApprove(i_ccipRouter, 0);
         ERC20(_feeToken).forceApprove(i_ccipRouter, type(uint256).max);
         feeToken = _feeToken;
     }
@@ -291,7 +292,7 @@ contract DestinationStrategy is CCIPReceiver {
         uint256 _withdrawnAmount,
         uint256 _deltaAmount,
         bool _isProfit
-    ) internal virtual view returns (Client.EVM2AnyMessage memory) {
+    ) internal view virtual returns (Client.EVM2AnyMessage memory) {
         // Set the token amounts
         Client.EVM2AnyMessage memory evm2AnyMessage;
         if (_withdrawnAmount > 0) {
@@ -349,5 +350,42 @@ contract DestinationStrategy is CCIPReceiver {
         // NOTE: No need to increase the bridgedAssets since it's already increased in the ccipReceive
         // if this is a donation then the next harvest will increase the bridgedAssets
         IStrategyInterface(yieldStrategy).deposit(_amount, address(this));
+    }
+
+    // Helpers
+    function buildCCIPMessage(
+        IStrategyInterface.CallType _callType,
+        uint256 _withdrawnAmount,
+        uint256 _deltaAmount,
+        bool _isProfit
+    ) external view returns (Client.EVM2AnyMessage memory) {
+        return
+            _buildCCIPMessage(
+                _callType,
+                _withdrawnAmount,
+                _deltaAmount,
+                _isProfit
+            );
+    }
+
+    function getFeeWithMessage(
+        Client.EVM2AnyMessage memory m
+    ) external view returns (uint256) {
+        return IRouterClient(i_ccipRouter).getFee(destChainSelector, m);
+    }
+
+    function getFeeGenerateMessage(
+        IStrategyInterface.CallType _callType,
+        uint256 _withdrawnAmount,
+        uint256 _deltaAmount,
+        bool _isProfit
+    ) external view returns (uint256) {
+        Client.EVM2AnyMessage memory m = _buildCCIPMessage(
+            _callType,
+            _withdrawnAmount,
+            _deltaAmount,
+            _isProfit
+        );
+        return IRouterClient(i_ccipRouter).getFee(destChainSelector, m);
     }
 }

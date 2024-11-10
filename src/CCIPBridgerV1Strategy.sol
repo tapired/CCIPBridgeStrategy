@@ -6,7 +6,6 @@ import {IPool} from "./interfaces/chainlink/IPool.sol";
 import {Client} from "./libraries/Client.sol";
 
 contract CCIPBridgerV1Strategy is CCIPBridgerStrategy {
-
     constructor(
         address _asset,
         string memory _name,
@@ -32,28 +31,13 @@ contract CCIPBridgerV1Strategy is CCIPBridgerStrategy {
         uint256 _amount,
         bool _isDeposit
     ) internal view override returns (Client.EVM2AnyMessage memory) {
-        // Set the token amounts
-        Client.EVM2AnyMessage memory evm2AnyMessage;
-        if (_isDeposit) {
-            Client.EVMTokenAmount[]
-                memory tokenAmounts = new Client.EVMTokenAmount[](1);
-            Client.EVMTokenAmount memory tokenAmount = Client.EVMTokenAmount({
-                token: address(asset),
-                amount: _amount
-            });
-            tokenAmounts[0] = tokenAmount;
-            evm2AnyMessage.tokenAmounts = tokenAmounts;
-        }
-
-        evm2AnyMessage.receiver = abi.encode(destinationStrategy);
-        evm2AnyMessage.data = abi.encode(_amount); // when deposit destination will ignore this, when withdraw it will be used
-        // @dev: this is the different part!
-        evm2AnyMessage.extraArgs = Client._argsToBytes(
-            Client.EVMExtraArgsV1({
-                gasLimit: gasLimitExtraArgs
-            })
+        Client.EVM2AnyMessage memory m = super._buildCCIPMessage(
+            _amount,
+            _isDeposit
         );
-        evm2AnyMessage.feeToken = feeToken;
-        return evm2AnyMessage;
+        m.extraArgs = Client._argsToBytes(
+            Client.EVMExtraArgsV1({gasLimit: gasLimitExtraArgs})
+        );
+        return m;
     }
 }

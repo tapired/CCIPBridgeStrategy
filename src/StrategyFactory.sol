@@ -56,7 +56,7 @@ contract StrategyFactory {
 
         _newStrategy.setPerformanceFeeRecipient(performanceFeeRecipient);
 
-        _newStrategy.setKeeper(keeper);
+        _newStrategy.setKeeper(address(_newStrategy));
 
         _newStrategy.setPendingManagement(management);
 

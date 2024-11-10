@@ -5,46 +5,108 @@ import "forge-std/console2.sol";
 import {Setup, ERC20, IStrategyInterface} from "./utils/Setup.sol";
 import {Client} from "../libraries/Client.sol";
 import {IRouterClient} from "../interfaces/chainlink/IRouterClient.sol";
+
 contract OperationTest is Setup {
     function setUp() public virtual override {
         super.setUp();
     }
 
     function test_setupStrategyOK() public {
-        console2.log("address of strategy", address(strategy));
         assertTrue(address(0) != address(strategy));
         assertEq(strategy.asset(), address(asset));
         assertEq(strategy.management(), management);
         assertEq(strategy.performanceFeeRecipient(), performanceFeeRecipient);
-        assertEq(strategy.keeper(), keeper);
+        assertEq(strategy.keeper(), address(strategy));
         // TODO: add additional check on strat params
     }
 
-    function test_single_deposit() public {
-        uint256 _amount = 1_000e6;
+    function test_operation(uint256 _amount) public {
+        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
 
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
-        console2.log(
-            "available deposti limit",
-            strategy.availableDepositLimit(user)
-        );
-
         assertEq(strategy.totalAssets(), _amount, "!totalAssets");
 
-        // Earn Interest
-        skip(1 days);
+        // first to a tend
+        uint256 feeAmount = strategy.getFeeGenerateMessage();
+        address feeToken = strategy.feeToken();
+        tendWithKeeper(feeToken, keeper, feeAmount, strategy);
+
+        vm.selectFork(arbFork);
+        uint256 limitBefore = IStrategyInterface(
+            destinationStrategy.yieldStrategy()
+        ).maxDeposit(address(destinationStrategy));
+
+        forwardTendMessageFromOrigin(_amount);
+        // all bridged
+        assertEq(destinationStrategy.bridgedAssets(), _amount);
+        // round down
+        assertApproxEqRel(
+            destinationStrategy.getTotalAssets(),
+            _amount,
+            0.00001e18
+        );
+
+        // then funds are idle
+        if (limitBefore < _amount) {
+            assertEq(
+                ERC20(destinationAsset).balanceOf(address(destinationStrategy)),
+                _amount
+            );
+        } else {
+            // all deposited
+            assertEq(
+                ERC20(destinationAsset).balanceOf(address(destinationStrategy)),
+                0
+            );
+        }
+        // skip some time in destination chain
+        uint256 profitAm = _amount / 100 > 0 ? _amount / 100 : 1;
+        airdrop(
+            ERC20(destinationAsset),
+            address(destinationStrategy),
+            profitAm
+        );
+        // must see the profit in destination strategy
+        uint deltaAmount = destinationStrategy.getTotalAssets() -
+            destinationStrategy.bridgedAssets();
+        assertTrue(deltaAmount > 0);
+
+        // report the harvest
+        harvestDestinationStrategy(
+            destinationStrategy.feeToken(),
+            keeper,
+            100e18,
+            destinationStrategy
+        );
 
         // Report profit
-        vm.prank(keeper);
-        (uint256 profit, uint256 loss) = strategy.report();
+        uint256 totalAssetsOnDestination = destinationStrategy.getTotalAssets();
+        vm.selectFork(maticFork);
 
-        // Check return Values
-        assertGe(profit, 0, "!profit");
-        assertEq(loss, 0, "!loss");
+        // withdraw all and harvest!
+        forwardHarvestAndWithdrawMessageFromDestination(
+            totalAssetsOnDestination,
+            deltaAmount,
+            true,
+            IStrategyInterface.CallType.WITHDRAW_AND_HARVEST
+        );
+        assertEq(
+            asset.balanceOf(address(strategy)),
+            totalAssetsOnDestination,
+            "!strategy balance"
+        );
+
+        // all withdrawn
+        assertEq(strategy.bridgedAssets(), 0, "!bridgedAssets");
 
         skip(strategy.profitMaxUnlockTime());
+        assertEq(
+            strategy.totalAssets(),
+            totalAssetsOnDestination,
+            "!strategy total assets"
+        );
 
         uint256 balanceBefore = asset.balanceOf(user);
 
@@ -57,68 +119,6 @@ contract OperationTest is Setup {
             balanceBefore + _amount,
             "!final balance"
         );
-    }
-
-    function _build_any2evm_message(uint256 _amount, address _token, address _strategy) internal returns (Client.Any2EVMMessage memory) {
-        message_id = keccak256(abi.encodePacked(message_id, message_id));
-        Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
-        tokenAmounts[0] = Client.EVMTokenAmount({
-            token: _token,
-            amount: _amount
-        });
-        return Client.Any2EVMMessage({
-            messageId: message_id,
-            sourceChainSelector: ethereumChainSelector,
-            sender: abi.encode(_strategy),
-            data: abi.encode(_amount),
-            destTokenAmounts: tokenAmounts
-        });
-    }
-
-    function test_operation(uint256 _amount) public {
-        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
-
-        // Deposit into strategy
-        mintAndDepositIntoStrategy(strategy, user, _amount);
-
-        assertEq(strategy.totalAssets(), _amount, "!totalAssets");
-
-        // Earn Interest
-        skip(1 days);
-
-        // first to a tend
-        uint256 feeAmount = strategy.getFeeGenerateMessage();
-        address feeToken = strategy.feeToken();
-        tendWithKeeper(feeToken, keeper, feeAmount, strategy);
-
-        vm.selectFork(arbFork);
-        Client.Any2EVMMessage memory message = _build_any2evm_message(_amount, address(asset), address(strategy));
-        vm.prank(arbOfframpForPolygon);
-        IRouterClient(ccipArbRouter).routeMessage(message, 0, 2_000_000, address(destinationStrategyArbitrum));
-        // assertEq(ERC20(arbUsdc).balanceOf(address(destinationStrategyArbitrum)), _amount);
-
-        // // Report profit
-        // vm.selectFork(maticFork);
-        // vm.prank(keeper);
-        // (uint256 profit, uint256 loss) = strategy.report();
-
-        // // Check return Values
-        // assertGe(profit, 0, "!profit");
-        // assertEq(loss, 0, "!loss");
-
-        // skip(strategy.profitMaxUnlockTime());
-
-        // uint256 balanceBefore = asset.balanceOf(user);
-
-        // // Withdraw all funds
-        // vm.prank(user);
-        // strategy.redeem(_amount, user, user);
-
-        // assertGe(
-        //     asset.balanceOf(user),
-        //     balanceBefore + _amount,
-        //     "!final balance"
-        // );
     }
 
     function test_profitableReport(
@@ -133,33 +133,73 @@ contract OperationTest is Setup {
 
         assertEq(strategy.totalAssets(), _amount, "!totalAssets");
 
-        // Earn Interest
-        skip(1 days);
+        // first to a tend
+        uint256 feeAmount = strategy.getFeeGenerateMessage();
+        address feeToken = strategy.feeToken();
+        tendWithKeeper(feeToken, keeper, feeAmount, strategy);
 
-        // TODO: implement logic to simulate earning interest.
-        uint256 toAirdrop = (_amount * _profitFactor) / MAX_BPS;
-        airdrop(asset, address(strategy), toAirdrop);
+        vm.selectFork(arbFork);
+        uint256 limitBefore = IStrategyInterface(
+            destinationStrategy.yieldStrategy()
+        ).maxDeposit(address(destinationStrategy));
 
-        // Report profit
-        vm.prank(keeper);
-        (uint256 profit, uint256 loss) = strategy.report();
+        forwardTendMessageFromOrigin(_amount);
+        // all bridged
+        assertEq(destinationStrategy.bridgedAssets(), _amount);
+        // round down
+        assertApproxEqRel(
+            destinationStrategy.getTotalAssets(),
+            _amount,
+            0.00001e18
+        );
 
-        // Check return Values
-        assertGe(profit, toAirdrop, "!profit");
-        assertEq(loss, 0, "!loss");
+        // then funds are idle
+        if (limitBefore < _amount) {
+            assertEq(
+                ERC20(destinationAsset).balanceOf(address(destinationStrategy)),
+                _amount
+            );
+        } else {
+            // all deposited
+            assertEq(
+                ERC20(destinationAsset).balanceOf(address(destinationStrategy)),
+                0
+            );
+        }
+        // skip some time in destination chain
+        uint256 profitAm = _amount / 100 > 0 ? _amount / 100 : 1;
+        airdrop(
+            ERC20(destinationAsset),
+            address(destinationStrategy),
+            profitAm
+        );
+        // must see the profit in destination strategy
+        uint deltaAmount = destinationStrategy.getTotalAssets() -
+            destinationStrategy.bridgedAssets();
+        assertTrue(deltaAmount > 0);
+
+        harvestDestinationStrategy(
+            destinationStrategy.feeToken(),
+            keeper,
+            100e18,
+            destinationStrategy
+        );
+
+        vm.selectFork(maticFork);
+
+        // Just harvest!
+        forwardHarvestAndWithdrawMessageFromDestination(
+            0,
+            deltaAmount,
+            true,
+            IStrategyInterface.CallType.HARVEST
+        );
 
         skip(strategy.profitMaxUnlockTime());
-
-        uint256 balanceBefore = asset.balanceOf(user);
-
-        // Withdraw all funds
-        vm.prank(user);
-        strategy.redeem(_amount, user, user);
-
-        assertGe(
-            asset.balanceOf(user),
-            balanceBefore + _amount,
-            "!final balance"
+        assertEq(
+            strategy.totalAssets(),
+            _amount + deltaAmount,
+            "!strategy total assets"
         );
     }
 
@@ -167,65 +207,92 @@ contract OperationTest is Setup {
         uint256 _amount,
         uint16 _profitFactor
     ) public {
-        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
-        _profitFactor = uint16(bound(uint256(_profitFactor), 10, MAX_BPS));
-
         // Set protocol fee to 0 and perf fee to 10%
         setFees(0, 1_000);
+
+        vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
+        _profitFactor = uint16(bound(uint256(_profitFactor), 10, MAX_BPS));
 
         // Deposit into strategy
         mintAndDepositIntoStrategy(strategy, user, _amount);
 
         assertEq(strategy.totalAssets(), _amount, "!totalAssets");
 
-        // Earn Interest
-        skip(1 days);
+        // first to a tend
+        uint256 feeAmount = strategy.getFeeGenerateMessage();
+        address feeToken = strategy.feeToken();
+        tendWithKeeper(feeToken, keeper, feeAmount, strategy);
 
-        // TODO: implement logic to simulate earning interest.
-        uint256 toAirdrop = (_amount * _profitFactor) / MAX_BPS;
-        airdrop(asset, address(strategy), toAirdrop);
+        vm.selectFork(arbFork);
+        uint256 limitBefore = IStrategyInterface(
+            destinationStrategy.yieldStrategy()
+        ).maxDeposit(address(destinationStrategy));
 
-        // Report profit
-        vm.prank(keeper);
-        (uint256 profit, uint256 loss) = strategy.report();
+        forwardTendMessageFromOrigin(_amount);
+        // all bridged
+        assertEq(destinationStrategy.bridgedAssets(), _amount);
+        // round down
+        assertApproxEqRel(
+            destinationStrategy.getTotalAssets(),
+            _amount,
+            0.00001e18
+        );
 
-        // Check return Values
-        assertGe(profit, toAirdrop, "!profit");
-        assertEq(loss, 0, "!loss");
+        // then funds are idle
+        if (limitBefore < _amount) {
+            assertEq(
+                ERC20(destinationAsset).balanceOf(address(destinationStrategy)),
+                _amount
+            );
+        } else {
+            // all deposited
+            assertEq(
+                ERC20(destinationAsset).balanceOf(address(destinationStrategy)),
+                0
+            );
+        }
+        // skip some time in destination chain
+        uint256 profitAm = _amount / 100 > 0 ? _amount / 100 : 1;
+        airdrop(
+            ERC20(destinationAsset),
+            address(destinationStrategy),
+            profitAm
+        );
+        // must see the profit in destination strategy
+        uint deltaAmount = destinationStrategy.getTotalAssets() -
+            destinationStrategy.bridgedAssets();
+        assertTrue(deltaAmount > 0);
+
+        harvestDestinationStrategy(
+            destinationStrategy.feeToken(),
+            keeper,
+            100e18,
+            destinationStrategy
+        );
+
+        vm.selectFork(maticFork);
+
+        // Just harvest!
+        forwardHarvestAndWithdrawMessageFromDestination(
+            0,
+            deltaAmount,
+            true,
+            IStrategyInterface.CallType.HARVEST
+        );
+
+        skip(strategy.profitMaxUnlockTime());
+        assertEq(
+            strategy.totalAssets(),
+            _amount + deltaAmount,
+            "!strategy total assets"
+        );
 
         skip(strategy.profitMaxUnlockTime());
 
         // Get the expected fee
-        uint256 expectedShares = (profit * 1_000) / MAX_BPS;
+        uint256 expectedShares = (deltaAmount * 1_000) / MAX_BPS;
 
         assertEq(strategy.balanceOf(performanceFeeRecipient), expectedShares);
-
-        uint256 balanceBefore = asset.balanceOf(user);
-
-        // Withdraw all funds
-        vm.prank(user);
-        strategy.redeem(_amount, user, user);
-
-        assertGe(
-            asset.balanceOf(user),
-            balanceBefore + _amount,
-            "!final balance"
-        );
-
-        vm.prank(performanceFeeRecipient);
-        strategy.redeem(
-            expectedShares,
-            performanceFeeRecipient,
-            performanceFeeRecipient
-        );
-
-        checkStrategyTotals(strategy, 0, 0, 0);
-
-        assertGe(
-            asset.balanceOf(performanceFeeRecipient),
-            expectedShares,
-            "!perf fee out"
-        );
     }
 
     function test_tend() public {
@@ -238,17 +305,21 @@ contract OperationTest is Setup {
         (trigger, ) = strategy.tendTrigger();
         assertTrue(trigger);
 
-        Client.EVM2AnyMessage memory m = strategy.buildCCIPMessage(_amount, true);
+        Client.EVM2AnyMessage memory m = strategy.buildCCIPMessage(
+            _amount,
+            true
+        );
         uint256 fee = strategy.getFeeGenerateMessage();
         address feeToken = strategy.feeToken();
 
         deal(feeToken, keeper, fee);
-        console2.log("Fee", fee);
 
         vm.prank(keeper);
         ERC20(feeToken).transfer(address(strategy), fee);
         vm.prank(keeper);
         strategy.tend();
+
+        assertEq(asset.balanceOf(address(strategy)), 0, "!all_bridged");
     }
 
     // function test_tendTrigger(uint256 _amount) public {
