@@ -31,6 +31,14 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     // tend stuff
     uint256 public maxTendBaseFee;
     uint256 public maxFeeAmount;
+    
+    // important, read the very bottom.
+    address public thisKeeper;
+    modifier onlyThisKeeperOrManagement() {
+        // bad error message but thats the only way to check if the sender is the keeper or management
+        if (msg.sender != thisKeeper) TokenizedStrategy.requireManagement(msg.sender);
+        _;
+    }
 
     constructor(
         address _asset,
@@ -302,7 +310,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     // EMERGENCY AND MANUAL FUNCTIONS
 
     /// @notice manually trigger a tend with a specific amount in case of emergency
-    function manualTend(uint256 _amount) external onlyKeepers {
+    function manualTend(uint256 _amount) external onlyThisKeeperOrManagement {
         Client.EVM2AnyMessage memory message = _buildCCIPMessage(_amount, true);
         IRouterClient(i_ccipRouter).ccipSend(destChainSelector, message);
 
@@ -340,7 +348,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     /// @notice set the fee token for the ccip. Note that it can't use the same asset as the fee token because
     /// the fee token has to be idle in the strategy balance and since asset can and should be idle in the strategy
     /// it can't be used as the fee token.
-    function setFeeToken(address _feeToken) external onlyKeepers {
+    function setFeeToken(address _feeToken) external onlyThisKeeperOrManagement {
         require(_feeToken != address(asset), "FEE_TOKEN_CANNOT_BE_ASSET");
         if (feeToken != address(0))
             ERC20(feeToken).forceApprove(i_ccipRouter, 0);
@@ -354,7 +362,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     function setCCIPExtraArgParameters(
         uint256 _gasLimitExtraArgs,
         bool _allowOutOfOrderExecutionExtraArgs
-    ) external onlyKeepers {
+    ) external onlyThisKeeperOrManagement {
         gasLimitExtraArgs = _gasLimitExtraArgs;
         allowOutOfOrderExecutionExtraArgs = _allowOutOfOrderExecutionExtraArgs;
     }
@@ -365,7 +373,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     function setOpenAndAreWeAllowed(
         bool _open,
         bool _areWeAllowed
-    ) external onlyKeepers {
+    ) external onlyThisKeeperOrManagement {
         open = _open;
         areWeAllowed = _areWeAllowed;
     }
@@ -387,7 +395,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     function setTendParameters(
         uint256 _maxFeeAmount,
         uint256 _maxTendBaseFee
-    ) external onlyKeepers {
+    ) external onlyThisKeeperOrManagement {
         maxFeeAmount = _maxFeeAmount;
         maxTendBaseFee = _maxTendBaseFee;
     }
@@ -514,12 +522,13 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     }
 
     // EXTERNAL
-    address public thisKeeper;
-
+    // Sets the keeper of this contract. This keeper will be used to call the tend function in the destination strategy.
     function setThisKeeper(address _thisKeeper) external onlyManagement {
         thisKeeper = _thisKeeper;
     }
 
+    // Overriding the original tend function in the TokenizedStrategy. Keeper is this contract so we need
+    // an another keeper to call the tend function in the destination strategy.
     function tend() external {
         require(msg.sender == thisKeeper, "!thisKeeper");
         IStrategyInterface(address(this)).tendThis(
