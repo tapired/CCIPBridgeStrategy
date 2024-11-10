@@ -48,4 +48,5 @@ interface IStrategyInterface is IStrategy {
 
     function getFeeGenerateMessage() external view returns (uint256);
     function setThisKeeper(address _thisKeeper) external;
+    function reportFromOriginChain() external;
 }

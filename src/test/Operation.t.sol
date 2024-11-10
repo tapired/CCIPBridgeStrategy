@@ -20,6 +20,12 @@ contract OperationTest is Setup {
         // TODO: add additional check on strat params
     }
 
+    function test_manual_report() public {
+        // doesnt revert, thats enough
+        vm.prank(keeper);
+        strategy.reportFromOriginChain();
+    }
+
     function test_operation(uint256 _amount) public {
         vm.assume(_amount > minFuzzAmount && _amount < maxFuzzAmount);
 

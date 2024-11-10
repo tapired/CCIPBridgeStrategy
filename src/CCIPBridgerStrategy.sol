@@ -40,7 +40,8 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
 
     modifier onlyThisKeeperOrManagement() {
         // bad error message but thats the only way to check if the sender is the keeper or management
-        if (msg.sender != thisKeeper) TokenizedStrategy.requireManagement(msg.sender);
+        if (msg.sender != thisKeeper)
+            TokenizedStrategy.requireManagement(msg.sender);
         _;
     }
 
@@ -274,8 +275,11 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
             message
         );
 
-        if (feeAmount < maxFeeAmount && block.basefee < maxTendBaseFee && idleBalance > minAssetAmountForTend)
-            return true;
+        if (
+            feeAmount < maxFeeAmount &&
+            block.basefee < maxTendBaseFee &&
+            idleBalance > minAssetAmountForTend
+        ) return true;
         return false;
     }
 
@@ -321,6 +325,11 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
         bridgedAssets += _amount;
     }
 
+    // in case the ccip reports fails so that we need to report manually from the origin chain
+    function reportFromOriginChain() external onlyThisKeeperOrManagement {
+        TokenizedStrategy.report();
+    }
+
     /// @dev Called in an emergency where destination strategy withdrew funds manually then bridged back to origin chain
     /// and funds are retrieved to repay the emergency withdrawal by this function
     function repayEmergencyWithdrawal(
@@ -352,7 +361,9 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     /// @notice set the fee token for the ccip. Note that it can't use the same asset as the fee token because
     /// the fee token has to be idle in the strategy balance and since asset can and should be idle in the strategy
     /// it can't be used as the fee token.
-    function setFeeToken(address _feeToken) external onlyThisKeeperOrManagement {
+    function setFeeToken(
+        address _feeToken
+    ) external onlyThisKeeperOrManagement {
         require(_feeToken != address(asset), "FEE_TOKEN_CANNOT_BE_ASSET");
         if (feeToken != address(0))
             ERC20(feeToken).forceApprove(i_ccipRouter, 0);
@@ -469,7 +480,6 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
             // then account the bridged back amount, note that this is idle in strategy
             bridgedAssets -= bridgedBackAmount;
             TokenizedStrategy.report();
-            return;
         }
     }
 
