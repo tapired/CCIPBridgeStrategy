@@ -27,7 +27,10 @@ interface IStrategyInterface is IStrategy {
     function areWeAllowed() external view returns (bool);
     function allowed(address) external view returns (bool);
     function manualTend(uint256 _amount) external;
-    function repayEmergencyWithdrawal(uint256 _amount, address _from) external;
+    function repayEmergencyWithdrawal(
+        uint256 _amount,
+        bool _reportAswell
+    ) external;
     function sweep(address _token) external;
     function setFeeToken(address _feeToken) external;
     function setCCIPExtraArgParameters(

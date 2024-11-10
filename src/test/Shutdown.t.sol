@@ -17,7 +17,6 @@ contract ShutdownTest is Setup {
         assertEq(strategy.totalAssets(), _amount, "!totalAssets");
 
         // Earn Interest
-        skip(1 days);
         airdrop(asset, address(strategy), 1e6);
 
         // Shutdown the strategy

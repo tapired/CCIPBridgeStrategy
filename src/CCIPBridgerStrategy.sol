@@ -334,9 +334,9 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     /// and funds are retrieved to repay the emergency withdrawal by this function
     function repayEmergencyWithdrawal(
         uint256 _amount,
-        address _from
+        bool _reportAswell // what a name
     ) external onlyManagement {
-        ERC20(asset).safeTransferFrom(_from, address(this), _amount);
+        ERC20(asset).safeTransferFrom(msg.sender, address(this), _amount);
 
         if (bridgedAssets > _amount) {
             // can be losses
@@ -345,6 +345,8 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
             // no losses
             bridgedAssets = 0;
         }
+
+        if (_reportAswell) TokenizedStrategy.report();
     }
 
     /// @dev in case fee tokens stuck in the contract
