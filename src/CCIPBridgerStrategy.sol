@@ -17,23 +17,27 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
     address public immutable destinationStrategy;
     uint64 public immutable destChainSelector; // 0x80226fc0Ee2b096224EeAc085Bb9a8cba1146f7D is router
 
-    uint256 public gasLimitExtraArgs;
-    IEVM2AnyOnRampClient public ccipOnRamp; // not immutable since it can be changed by the chainlink
-    IPool public ccipPool; // not immutable since it can be changed by the chainlink
+    IEVM2AnyOnRampClient public ccipOnRamp; // not immutable since it can be changed by the chainlink, own slot
+    IPool public ccipPool; // not immutable since it can be changed by the chainlink, own slot
 
-    uint256 public bridgedAssets;
-    address public feeToken;
-    bool public allowOutOfOrderExecutionExtraArgs;
-    bool public open = true; // if false, no deposits or allowed
-    bool public areWeAllowed; // if false, we are not allowed to deposit in CCIP pool level
-    mapping(address => bool) public allowed; // if false, no deposits from the address allowed
+    uint256 public bridgedAssets; // own slot
+    address public feeToken; // shared slot
+    bool public allowOutOfOrderExecutionExtraArgs; // shared slot
+    bool public open = true; // if false, no deposits or allowed, shared slot
+    bool public areWeAllowed; // if false, we are not allowed to deposit in CCIP pool level, shared slot
 
-    // tend stuff
-    uint256 public maxTendBaseFee;
-    uint256 public maxFeeAmount;
-    
+    uint256 public gasLimitExtraArgs; // own slot
+
+    // tend stuff, uint64 and uint96 are chosen to save gas and big enough to cover the max values, all packed
+    uint64 public maxTendBaseFee;
+    uint96 public maxFeeAmount;
+    uint96 public minAssetAmountForTend;
+
     // important, read the very bottom.
     address public thisKeeper;
+
+    mapping(address => bool) public allowed; // if false, no deposits from the address allowed
+
     modifier onlyThisKeeperOrManagement() {
         // bad error message but thats the only way to check if the sender is the keeper or management
         if (msg.sender != thisKeeper) TokenizedStrategy.requireManagement(msg.sender);
@@ -270,7 +274,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
             message
         );
 
-        if (feeAmount < maxFeeAmount && block.basefee < maxTendBaseFee)
+        if (feeAmount < maxFeeAmount && block.basefee < maxTendBaseFee && idleBalance > minAssetAmountForTend)
             return true;
         return false;
     }
@@ -391,13 +395,16 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
 
     /// @notice set the tend parameters
     /// @param _maxFeeAmount the maximum fee amount that we are willing to pay for the tend
+    /// @param _minAssetAmountForTend the minimum asset amount that we are willing to tend
     /// @param _maxTendBaseFee the maximum base fee that we are willing to pay for the tend
     function setTendParameters(
-        uint256 _maxFeeAmount,
-        uint256 _maxTendBaseFee
+        uint96 _maxFeeAmount,
+        uint96 _minAssetAmountForTend,
+        uint64 _maxTendBaseFee
     ) external onlyThisKeeperOrManagement {
         maxFeeAmount = _maxFeeAmount;
         maxTendBaseFee = _maxTendBaseFee;
+        minAssetAmountForTend = _minAssetAmountForTend;
     }
 
     // CHAINLINK CCIP FUNCTIONS
