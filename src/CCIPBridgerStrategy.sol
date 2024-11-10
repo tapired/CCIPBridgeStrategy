@@ -548,8 +548,7 @@ contract CCIPBridgerStrategy is BaseStrategy, CCIPReceiver {
 
     // Overriding the original tend function in the TokenizedStrategy. Keeper is this contract so we need
     // an another keeper to call the tend function in the destination strategy.
-    function tend() external {
-        require(msg.sender == thisKeeper, "!thisKeeper");
+    function tend() external onlyThisKeeperOrManagement {
         IStrategyInterface(address(this)).tendThis(
             asset.balanceOf(address(this))
         );
